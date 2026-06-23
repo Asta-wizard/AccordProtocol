@@ -423,6 +423,43 @@ fn revoke_rejects_when_not_previously_approved() {
     );
 }
 
+// ─── Revoke → Re-approve ──────────────────────────────────────────────────────
+
+#[test]
+fn revoke_allows_reapprove() {
+    let (env, client, owner_a, _, _, _, token_client) = setup(2);
+    let id = client.create_proposal(
+        &owner_a,
+        &Address::generate(&env),
+        &1_000_000_i128,
+        &token_client.address,
+        &str(&env, "Pay"),
+        &DEADLINE,
+    );
+    client.approve(&owner_a, &id);
+    client.revoke(&owner_a, &id);
+    // Re-approve — should succeed
+    client.approve(&owner_a, &id);
+    assert_eq!(client.get_proposal(&id).approvals, 1);
+}
+
+#[test]
+fn has_approved_returns_false_after_revoke() {
+    let (env, client, owner_a, _, _, _, token_client) = setup(2);
+    let id = client.create_proposal(
+        &owner_a,
+        &Address::generate(&env),
+        &1_000_000_i128,
+        &token_client.address,
+        &str(&env, "Pay"),
+        &DEADLINE,
+    );
+    client.approve(&owner_a, &id);
+    assert!(client.has_approved(&id, &owner_a));
+    client.revoke(&owner_a, &id);
+    assert!(!client.has_approved(&id, &owner_a));
+}
+
 // ─── Execute ─────────────────────────────────────────────────────────────────
 
 #[test]
