@@ -93,6 +93,27 @@ fn initialize_sets_owners_and_threshold() {
 }
 
 #[test]
+fn initialize_accepts_maximum_owners() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(AccordContract, ());
+    let client = AccordContractClient::new(&env, &contract_id);
+    
+    // Generate exactly 20 unique addresses (MAX_OWNERS)
+    let mut owners = Vec::new(&env);
+    for _ in 0..20 {
+        owners.push_back(Address::generate(&env));
+    }
+    
+    // Initialize should succeed
+    client.initialize(&owners, &1, &0);
+    
+    // Verify all 20 owners were stored
+    let stored_owners = client.get_owners();
+    assert_eq!(stored_owners.len(), 20);
+}
+
+#[test]
 fn initialize_rejects_second_call() {
     let (env, client, owner_a, owner_b, owner_c, _, _) = setup(2);
     let mut owners = Vec::new(&env);
@@ -278,6 +299,38 @@ fn create_proposal_accepts_valid_token() {
 }
 
 #[test]
+fn description_boundary() {
+    let (env, client, owner_a, _, _, _, token_client) = setup(2);
+    let recipient = Address::generate(&env);
+    
+    // Test exact boundary: 300 characters should succeed
+    let description_300 = "a".repeat(300);
+    let result_300 = client.try_create_proposal(
+        &owner_a,
+        &recipient,
+        &1_000_000_i128,
+        &token_client.address,
+        &str(&env, &description_300),
+        &DEADLINE,
+    );
+    assert!(result_300.is_ok());
+    
+    // Test over boundary: 301 characters should fail
+    let description_301 = "a".repeat(301);
+    assert_eq!(
+        client.try_create_proposal(
+            &owner_a,
+            &recipient,
+            &1_000_000_i128,
+            &token_client.address,
+            &str(&env, &description_301),
+            &DEADLINE,
+        ),
+        Err(Ok(ContractError::DescriptionTooLong))
+    );
+}
+
+#[test]
 fn create_proposal_emits_created_event() {
     let (env, client, owner_a, _, _, _, token_client) = setup(2);
     let recipient = Address::generate(&env);
@@ -453,6 +506,43 @@ fn revoke_rejects_when_not_previously_approved() {
         client.try_revoke(&owner_a, &id),
         Err(Ok(ContractError::NotApproved))
     );
+}
+
+// ─── Revoke → Re-approve ──────────────────────────────────────────────────────
+
+#[test]
+fn revoke_allows_reapprove() {
+    let (env, client, owner_a, _, _, _, token_client) = setup(2);
+    let id = client.create_proposal(
+        &owner_a,
+        &Address::generate(&env),
+        &1_000_000_i128,
+        &token_client.address,
+        &str(&env, "Pay"),
+        &DEADLINE,
+    );
+    client.approve(&owner_a, &id);
+    client.revoke(&owner_a, &id);
+    // Re-approve — should succeed
+    client.approve(&owner_a, &id);
+    assert_eq!(client.get_proposal(&id).approvals, 1);
+}
+
+#[test]
+fn has_approved_returns_false_after_revoke() {
+    let (env, client, owner_a, _, _, _, token_client) = setup(2);
+    let id = client.create_proposal(
+        &owner_a,
+        &Address::generate(&env),
+        &1_000_000_i128,
+        &token_client.address,
+        &str(&env, "Pay"),
+        &DEADLINE,
+    );
+    client.approve(&owner_a, &id);
+    assert!(client.has_approved(&id, &owner_a));
+    client.revoke(&owner_a, &id);
+    assert!(!client.has_approved(&id, &owner_a));
 }
 
 // ─── Execute ─────────────────────────────────────────────────────────────────

@@ -1,7 +1,7 @@
 import { useState } from "react";
+import { Link, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { CreateProposalModal } from "./components/CreateProposalModal";
 import { DashboardPage } from "./pages/DashboardPage";
-import { NotFoundPage } from "./pages/NotFoundPage";
 import { HistoryPage } from "./pages/HistoryPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { OwnersPage } from "./pages/OwnersPage";
@@ -10,9 +10,9 @@ import { useWallet } from "./hooks/useWallet";
 import { approveProposal, executeProposal } from "./lib/submit";
 
 type Page = "dashboard" | "history" | "settings" | "owners";
+import { ProposalCardSkeleton } from "./components/ProposalCardSkeleton";
 
 export default function App() {
-  const [page, setPage] = useState<Page>("dashboard");
   const [showCreate, setShowCreate] = useState(false);
   const [txError, setTxError] = useState<string | null>(null);
   const [txPending, setTxPending] = useState(false);
@@ -31,12 +31,13 @@ export default function App() {
       // ignore clipboard errors
     }
   }
+  const navigate = useNavigate();
+  const location = useLocation();
+  const currentPath = location.pathname;
 
   const activeProposals = proposals.filter((p) =>
     ["pending", "ready"].includes(p.status)
   );
-
- 
 
   async function withTx(fn: () => Promise<void>) {
     if (!wallet.address) {
@@ -67,10 +68,6 @@ export default function App() {
     return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
   }
 
-  function handleGoHome() {
-    setPage("dashboard");
-  }
-
   return (
     <div className="min-h-screen bg-zinc-950 text-white">
       <header className="border-b border-zinc-800 px-6 py-4">
@@ -91,14 +88,22 @@ export default function App() {
                 key={navPage}
                 type="button"
                 onClick={() => setPage(navPage)}
+            {[
+              { label: "dashboard", to: "/" },
+              { label: "history", to: "/history" },
+              { label: "settings", to: "/settings" },
+            ].map(({ label, to }) => (
+              <Link
+                key={label}
+                to={to}
                 className={`text-sm px-3 py-1.5 rounded-lg capitalize transition-colors ${
-                  page === navPage
+                  currentPath === to
                     ? "bg-zinc-800 text-white"
                     : "text-zinc-500 hover:text-zinc-300"
                 }`}
               >
-                {navPage}
-              </button>
+                {label}
+              </Link>
             ))}
           </nav>
 
@@ -176,8 +181,10 @@ export default function App() {
         )}
 
         {loading ? (
-          <div className="text-center py-16 text-zinc-500 text-sm">
-            Loading contract data…
+          <div className="space-y-3">
+            <ProposalCardSkeleton />
+            <ProposalCardSkeleton />
+            <ProposalCardSkeleton />
           </div>
         ) : page === "dashboard" ? (
           <DashboardPage
@@ -197,11 +204,42 @@ export default function App() {
             threshold={parseInt(stats.find((s) => s.label === "Threshold")?.value.split(" ")[0] || "0")}
             totalOwners={owners.length}
           />
+          <HistoryPage
+            historyProposals={historyProposals}
+            onApprove={handleApprove}
+          />
+        ) : page === "settings" ? (
+          <SettingsPage stats={stats} />
         ) : (
-          <>
           <NotFoundPage onGoHome={handleGoHome} />
+        ) : (
           <SettingsPage stats={stats} />
           </>
+          <Routes>
+            <Route
+              path="/"
+              element={
+                <DashboardPage
+                  activeProposals={activeProposals}
+                  owners={owners}
+                  dashboardStats={stats}
+                  walletAddress={wallet.address}
+                  onApprove={handleApprove}
+                  onExecute={handleExecute}
+                  onCreateProposal={() => setShowCreate(true)}
+                />
+              }
+            />
+            <Route
+              path="/history"
+              element={<HistoryPage proposals={proposals} onApprove={handleApprove} />}
+            />
+            <Route
+              path="/settings"
+              element={<SettingsPage stats={stats} />}
+            />
+            <Route path="*" element={<NotFoundPage onGoHome={() => navigate("/")} />} />
+          </Routes>
         )}
       </main>
 

@@ -1,3 +1,4 @@
+import { useCallback, useEffect, useState } from "react";
 import type { Proposal } from "../types/accord";
 import { ApprovalBar } from "./ApprovalBar";
 import { StatusBadge } from "./StatusBadge";
@@ -17,8 +18,39 @@ export function ProposalCard({
 }: ProposalCardProps) {
   const connected = !!walletAddress;
 
+  const getCountdownText = useCallback(() => {
+    if (proposal.status === "executed") {
+      return proposal.deadline;
+    }
+    const now = Math.floor(Date.now() / 1000);
+    const diff = proposal.deadlineTs - now;
+
+    if (diff <= 0) {
+      return "Expired";
+    }
+
+    const days = Math.floor(diff / 86400);
+    const hours = Math.floor((diff % 86400) / 3600);
+    const minutes = Math.floor((diff % 3600) / 60);
+    return `${days}d ${hours}h ${minutes}m`;
+  }, [proposal]);
+
+  const [countdown, setCountdown] = useState<string>(getCountdownText());
+
+  useEffect(() => {
+    if (proposal.status === "executed") {
+      return;
+    }
+
+    const interval = setInterval(() => {
+      setCountdown(getCountdownText());
+    }, 60000);
+
+    return () => clearInterval(interval);
+  }, [getCountdownText, proposal.status]);
+
   return (
-    <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 hover:border-zinc-700 transition-colors">
+    <div className={`${proposal.status === "ready" ? "bg-emerald-500/5 border-emerald-500/40 hover:border-emerald-500/60" : "bg-zinc-900 border-zinc-800 hover:border-zinc-700"} rounded-xl p-4 transition-colors`}>
       <div className="flex items-start justify-between mb-3">
         <div>
           <p className="text-xs text-zinc-500 font-mono mb-1">
@@ -43,7 +75,7 @@ export function ProposalCard({
         <ApprovalBar approvals={proposal.approvals} threshold={proposal.threshold} />
 
         <div className="flex items-center gap-2">
-          <span className="text-xs text-zinc-600">{proposal.createdAt}</span>
+          <span className="text-xs text-zinc-600">{countdown}</span>
 
           {proposal.status === "pending" && (
             <button
