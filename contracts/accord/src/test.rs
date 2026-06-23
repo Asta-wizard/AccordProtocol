@@ -266,6 +266,38 @@ fn create_proposal_rejects_empty_description() {
     );
 }
 
+// New tests for issue #34: invalid vs valid token handling
+#[test]
+fn create_proposal_rejects_invalid_token() {
+    let (env, client, owner_a, _, _, _, _) = setup(2);
+    let invalid_token = Address::generate(&env);
+    assert_eq!(
+        client.try_create_proposal(
+            &owner_a,
+            &Address::generate(&env),
+            &1_000_000_i128,
+            &invalid_token,
+            &str(&env, "Bad token"),
+            &DEADLINE,
+        ),
+        Err(Ok(ContractError::InvalidToken))
+    );
+}
+
+#[test]
+fn create_proposal_accepts_valid_token() {
+    let (env, client, owner_a, _, _, _, token_client) = setup(2);
+    let id = client.create_proposal(
+        &owner_a,
+        &Address::generate(&env),
+        &1_000_000_i128,
+        &token_client.address,
+        &str(&env, "Valid token"),
+        &DEADLINE,
+    );
+    assert!(id > 0);
+}
+
 #[test]
 fn description_boundary() {
     let (env, client, owner_a, _, _, _, token_client) = setup(2);
@@ -685,6 +717,12 @@ fn execute_rejects_expired_even_if_approved() {
 // ─── Query ───────────────────────────────────────────────────────────────────
 
 #[test]
+fn get_version_returns_current_version() {
+    let (_, client, _, _, _, _, _) = setup(2);
+    assert_eq!(client.get_version(), 1);
+}
+
+#[test]
 fn is_owner_returns_correct_results() {
     let (_, client, owner_a, _, _, non_owner, _) = setup(2);
     assert!(client.is_owner(&owner_a));
@@ -710,6 +748,62 @@ fn get_proposals_paged_returns_correct_window() {
     let page2 = client.get_proposals_paged(&3, &3);
     assert_eq!(page2.len(), 2);
     assert_eq!(page2.get(0).unwrap().id, 4);
+}
+
+#[test]
+fn get_proposals_paged_returns_empty_beyond_offset() {
+    let (env, client, owner_a, _, _, _, token_client) = setup(2);
+    for _ in 0..3_u32 {
+        client.create_proposal(
+            &owner_a,
+            &Address::generate(&env),
+            &1_000_000_i128,
+            &token_client.address,
+            &str(&env, "Test"),
+            &DEADLINE,
+        );
+    }
+    let page = client.get_proposals_paged(&10, &5);
+    assert_eq!(page.len(), 0);
+}
+
+#[test]
+fn get_total_proposals_counts_all_ever_created() {
+    let (env, client, owner_a, owner_b, owner_c, _, token_client) = setup(1);
+    // Create 3 proposals
+    let id1 = client.create_proposal(
+        &owner_a,
+        &Address::generate(&env),
+        &1_000_000_i128,
+        &token_client.address,
+        &str(&env, "Proposal 1"),
+        &DEADLINE,
+    );
+    let id2 = client.create_proposal(
+        &owner_a,
+        &Address::generate(&env),
+        &1_000_000_i128,
+        &token_client.address,
+        &str(&env, "Proposal 2"),
+        &DEADLINE,
+    );
+    let _id3 = client.create_proposal(
+        &owner_a,
+        &Address::generate(&env),
+        &1_000_000_i128,
+        &token_client.address,
+        &str(&env, "Proposal 3"),
+        &DEADLINE,
+    );
+    
+    // Execute 2 of them
+    client.approve(&owner_a, &id1);
+    client.execute(&owner_b, &id1);
+    client.approve(&owner_a, &id2);
+    client.execute(&owner_c, &id2);
+    
+    // Check total count is still 3
+    assert_eq!(client.get_total_proposals(), 3);
 }
 
 // ─── Full Lifecycle ───────────────────────────────────────────────────────────
@@ -754,6 +848,83 @@ fn full_lifecycle_2of3() {
     );
 }
 
+#[test]
+fn execute_fails_when_balance_insufficient() {
+    let env = Env::default();
+    env.mock_all_auths();
+    set_timestamp(&env, NOW);
+
+    let owner_a = Address::generate(&env);
+    let owner_b = Address::generate(&env);
+    let owner_c = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let token_id = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token_client = token::Client::new(&env, &token_id.address());
+
+    let contract_id = env.register(AccordContract, ());
+    let client = AccordContractClient::new(&env, &contract_id);
+
+    let mut owners = Vec::new(&env);
+    owners.push_back(owner_a.clone());
+    owners.push_back(owner_b.clone());
+    owners.push_back(owner_c.clone());
+    client.initialize(&owners, &2, &0);
+
+    // Do not mint any tokens to the contract — balance is zero.
+
+    let amount: i128 = 1_000_000;
+    let id = client.create_proposal(
+        &owner_a,
+        &recipient,
+        &amount,
+        &token_client.address,
+        &str(&env, "Insufficient balance"),
+        &DEADLINE,
+    );
+
+    client.approve(&owner_a, &id);
+    client.approve(&owner_b, &id);
+
+    // Execute should fail because the contract has no funds.
+    assert_eq!(
+        client.try_execute(&owner_a, &id),
+        Err(Ok(ContractError::TransferFailed))
+    );
+}
+
+#[test]
+fn create_proposal_rejects_at_limit() {
+    let (env, client, owner_a, _, _, _, token_client) = setup(2);
+    let recipient = Address::generate(&env);
+
+    // Create exactly 50 proposals (MAX_ACTIVE_PROPOSALS).
+    for i in 0..50 {
+        client.create_proposal(
+            &owner_a,
+            &recipient,
+            &1_000_000_i128,
+            &token_client.address,
+            &str(&env, &format!("Proposal {}", i)),
+            &DEADLINE,
+        );
+    }
+
+    // The 51st proposal should be rejected with TooManyActiveProposals.
+    assert_eq!(
+        client.try_create_proposal(
+            &owner_a,
+            &recipient,
+            &1_000_000_i128,
+            &token_client.address,
+            &str(&env, "51st proposal"),
+            &DEADLINE,
+        ),
+        Err(Ok(ContractError::TooManyActiveProposals))
+    );
+}
+
 // ─── Deadline Edge Cases ──────────────────────────────────────────────────────
 
 #[test]
@@ -771,6 +942,73 @@ fn create_proposal_rejects_deadline_at_now() {
             &NOW, // exactly the current timestamp
         ),
         Err(Ok(ContractError::InvalidDeadline))
+    );
+}
+
+#[test]
+fn get_approvers_returns_only_approved_addresses() {
+    let (env, client, owner_a, owner_b, owner_c, _, token_client) = setup(3);
+    let id = client.create_proposal(
+        &owner_a,
+        &Address::generate(&env),
+        &1_000_000_i128,
+        &token_client.address,
+        &str(&env, "Pay"),
+        &DEADLINE,
+    );
+    client.approve(&owner_a, &id);
+    client.approve(&owner_b, &id);
+
+    let approvers = client.get_approvers(&id);
+    assert_eq!(approvers.len(), 2);
+    assert!(approvers.contains(&owner_a));
+    assert!(approvers.contains(&owner_b));
+    assert!(!approvers.contains(&owner_c));
+}
+
+#[test]
+fn get_approvers_returns_empty_when_none_have_approved() {
+    let (env, client, owner_a, _, _, _, token_client) = setup(2);
+    let id = client.create_proposal(
+        &owner_a,
+        &Address::generate(&env),
+        &1_000_000_i128,
+        &token_client.address,
+        &str(&env, "Pay"),
+        &DEADLINE,
+    );
+
+    let approvers = client.get_approvers(&id);
+    assert_eq!(approvers.len(), 0);
+}
+
+#[test]
+fn get_approvers_excludes_revoked_approval() {
+    let (env, client, owner_a, owner_b, _, _, token_client) = setup(3);
+    let id = client.create_proposal(
+        &owner_a,
+        &Address::generate(&env),
+        &1_000_000_i128,
+        &token_client.address,
+        &str(&env, "Pay"),
+        &DEADLINE,
+    );
+    client.approve(&owner_a, &id);
+    client.approve(&owner_b, &id);
+    client.revoke(&owner_a, &id);
+
+    let approvers = client.get_approvers(&id);
+    assert_eq!(approvers.len(), 1);
+    assert!(!approvers.contains(&owner_a));
+    assert!(approvers.contains(&owner_b));
+}
+
+#[test]
+fn get_approvers_rejects_unknown_proposal() {
+    let (_, client, _, _, _, _, _) = setup(2);
+    assert_eq!(
+        client.try_get_approvers(&999),
+        Err(Ok(ContractError::ProposalNotFound))
     );
 }
 

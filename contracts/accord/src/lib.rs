@@ -20,10 +20,14 @@ pub enum ProposalStatus {
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[contracttype]
 pub enum ProposalKind {
-    Transfer(Address, i128, Address), // (to, amount, token)
-    AddOwner(Address),               // (new_owner)
-    RemoveOwner(Address),           // (owner_to_remove)
-    ChangeThreshold(u32),           // (new_threshold)
+    /// Transfer(to, amount, token)
+    Transfer(Address, i128, Address),
+    /// AddOwner(new_owner)
+    AddOwner(Address),
+    /// RemoveOwner(owner_to_remove)
+    RemoveOwner(Address),
+    /// ChangeThreshold(new_threshold)
+    ChangeThreshold(u32),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -161,6 +165,8 @@ fn bump_persistent<K: IntoVal<Env, Val>>(env: &Env, key: &K) {
 
 // ─── Validation Constants ────────────────────────────────────────────────────
 
+/// Contract version, bumped on each release. Queried via `get_version`.
+const CONTRACT_VERSION: u32 = 1;
 /// Minimum amount: 0.1 stroops of whatever token is used.
 const MIN_AMOUNT: i128 = 1;
 /// Max description: 300 characters.
@@ -243,10 +249,20 @@ fn write_approval(env: &Env, proposal_id: u64, owner: &Address, approved: bool) 
 }
 
 fn read_active_count(env: &Env) -> u32 {
-    env.storage()
-        .instance()
-        .get(&active_count_key())
-        .unwrap_or(0_u32)
+    // Recompute active proposals (Pending + Ready) to ensure expired/ executed
+    // proposals are not counted, guarding against any missed decrements.
+    let next_id = env.storage().instance().get(&next_id_key()).unwrap_or(1_u64);
+    let mut active: u32 = 0;
+    for id in 1..next_id {
+        if let Ok(mut proposal) = read_proposal(env, id) {
+            // derive_status does not persist; we only count current derived active ones
+            let status = derive_status(env, &proposal);
+            if matches!(status, ProposalStatus::Pending | ProposalStatus::Ready) {
+                active = active.saturating_add(1);
+            }
+        }
+    }
+    active
 }
 
 fn write_active_count(env: &Env, count: u32) {
@@ -287,7 +303,11 @@ fn derive_status(env: &Env, proposal: &Proposal) -> ProposalStatus {
 
 fn validate_token(env: &Env, token_address: &Address) -> Result<(), ContractError> {
     let client = token::Client::new(env, token_address);
-    if client.try_decimals().is_err() || client.try_symbol().is_err() {
+    // Require decimals, symbol, and name to all succeed to consider this a valid token.
+    if client.try_decimals().is_err()
+        || client.try_symbol().is_err()
+        || client.try_name().is_err()
+    {
         return Err(ContractError::InvalidToken);
     }
     Ok(())
@@ -869,6 +889,28 @@ impl AccordContract {
     }
 
     // ─── Read-Only Queries ───────────────────────────────────────────────────
+
+    /// Returns the addresses of owners who have currently approved `proposal_id`
+    /// (i.e. approved and not subsequently revoked). Errors if the contract is
+    /// not initialized or the proposal does not exist.
+    pub fn get_approvers(env: Env, proposal_id: u64) -> Result<Vec<Address>, ContractError> {
+        let owners = read_owners(&env)?;
+        read_proposal(&env, proposal_id)?;
+
+        let mut approvers = Vec::new(&env);
+        for owner in owners.iter() {
+            if read_approval(&env, proposal_id, &owner) {
+                approvers.push_back(owner);
+            }
+        }
+        Ok(approvers)
+    }
+
+    /// Returns the contract version. Useful for frontends and upgrade scripts
+    /// that need to know which version of the contract is deployed.
+    pub fn get_version(_env: Env) -> u32 {
+        CONTRACT_VERSION
+    }
 
     /// Returns the current state of a proposal with a derived status.
     pub fn get_proposal(env: Env, proposal_id: u64) -> Result<Proposal, ContractError> {

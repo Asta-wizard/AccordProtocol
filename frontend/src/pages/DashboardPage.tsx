@@ -10,6 +10,7 @@ type DashboardPageProps = {
   walletAddress: string | null;
   onApprove: (id: number) => void;
   onExecute: (id: number) => void;
+  onRevoke: (id: number) => void;
   onCreateProposal: () => void;
   loading: boolean;
   error: string | null;
@@ -22,6 +23,7 @@ export function DashboardPage({
   walletAddress,
   onApprove,
   onExecute,
+  onRevoke,
   onCreateProposal,
   loading,
   error,
@@ -78,6 +80,7 @@ export function DashboardPage({
               walletAddress={walletAddress}
               onApprove={onApprove}
               onExecute={onExecute}
+              onRevoke={onRevoke}
             />
           ))
         )}
