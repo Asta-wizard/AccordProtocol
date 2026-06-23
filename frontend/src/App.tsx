@@ -159,13 +159,12 @@ export default function App() {
             onCreateProposal={() => setShowCreate(true)}
           />
         ) : page === "history" ? (
-          <HistoryPage
-            historyProposals={historyProposals}
-            onApprove={handleApprove}
-          />
+          <HistoryPage proposals={proposals} onApprove={handleApprove} />
         ) : (
+          <>
           <NotFoundPage onGoHome={handleGoHome} />
           <SettingsPage stats={stats} />
+          </>
         )}
       </main>
 
