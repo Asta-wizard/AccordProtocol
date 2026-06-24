@@ -166,6 +166,12 @@ export default function App() {
           </div>
         )}
 
+        {wallet.networkMismatch && (
+          <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl px-4 py-3 mb-6 text-sm text-amber-400">
+            Your wallet network does not match this app. Expected network: {import.meta.env.VITE_NETWORK_PASSPHRASE}. Switch Freighter network to continue.
+          </div>
+        )}
+
         {txPending && (
           <div className="mb-6 rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-400">
             Waiting for confirmation…
